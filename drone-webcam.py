@@ -1,32 +1,52 @@
-from dronekit import connect, VehicleMode, LocationGlobalRelative
+from dronekit import connect, VehicleMode, LocationGlobalRelative, Command
 import cv2
 import threading
 import time
-import keyboard  # for arrow key detection
+from pymavlink import mavutil
+from pynput import keyboard  # use pynput for key detection on Linux
 
 # ========================
 # 1. Connect to the Vehicle
 # ========================
 print("Connecting to vehicle...")
-vehicle = connect('tcp:127.0.0.1:5762', wait_ready=True)  # Adjust this if using a real drone
+vehicle = connect('tcp:192.168.1.100:5760', wait_ready=True)  # Replace with your laptop's IP and port
 print("Connected to vehicle.")
 
 # ========================
-# 2. Webcam Thread
+# 2. Webcam Thread with Optional Recording
 # ========================
+recording = False
+out = None
+
+VIDEO_WIDTH = 3840  # Set for 4K: 3840x2160 or 1920x1080 for Full HD
+VIDEO_HEIGHT = 2160
+
 def show_webcam():
+    global recording, out
     cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, VIDEO_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VIDEO_HEIGHT)
+
     if not cap.isOpened():
         print("Failed to open webcam.")
         return
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
         cv2.imshow("Webcam Feed", frame)
+
+        if recording and out is not None:
+            out.write(frame)
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+
     cap.release()
+    if out:
+        out.release()
     cv2.destroyAllWindows()
 
 # Start webcam in a separate thread
@@ -61,41 +81,59 @@ def arm_and_takeoff(aTargetAltitude):
 def move_relative(dx=0, dy=0, dz=0):
     current_location = vehicle.location.global_relative_frame
     new_location = LocationGlobalRelative(
-        current_location.lat + dx * 0.00001,
-        current_location.lon + dy * 0.00001,
+        current_location.lat + dx * 0.000001,  # very slow movement
+        current_location.lon + dy * 0.000001,  # very slow movement
         current_location.alt + dz
     )
-    vehicle.simple_goto(new_location)
+    vehicle.simple_goto(new_location, groundspeed=0.25)  # set very low groundspeed
     print(f"Moving to: {new_location}")
 
+def send_yaw_velocity(yaw_rate):
+    msg = vehicle.message_factory.set_attitude_target_encode(
+        0,
+        0,
+        0,
+        0b00000100,
+        [0, 0, 0, 1],  # dummy quaternion
+        0, 0, 0,
+        yaw_rate
+    )
+    vehicle.send_mavlink(msg)
+    vehicle.flush()
+
 # ========================
-# 4. Arrow Key Control
+# 4. Arrow Key Control with pynput
 # ========================
+
 def arrow_key_control():
-    print("Use arrow keys to move. Press 'esc' to stop controlling.")
+    print("Use arrow keys to move. Press ESC to exit move control.")
     step = 1  # meters
-    while True:
-        if keyboard.is_pressed('esc'):
-            print("Exiting move control mode.")
-            break
-        elif keyboard.is_pressed('up'):
-            move_relative(dx=step)
-            time.sleep(0.5)
-        elif keyboard.is_pressed('down'):
-            move_relative(dx=-step)
-            time.sleep(0.5)
-        elif keyboard.is_pressed('left'):
-            move_relative(dy=-step)
-            time.sleep(0.5)
-        elif keyboard.is_pressed('right'):
-            move_relative(dy=step)
-            time.sleep(0.5)
-        elif keyboard.is_pressed('u'):
-            move_relative(dz=-step)
-            time.sleep(0.5)
-        elif keyboard.is_pressed('j'):
-            move_relative(dz=step)
-            time.sleep(0.5)
+    yaw_rate = 0.1  # rad/s for slower rotation
+
+    def on_press(key):
+        try:
+            if key == keyboard.Key.esc:
+                print("Exiting move control mode.")
+                return False
+            elif key == keyboard.Key.up:
+                move_relative(dx=step)
+            elif key == keyboard.Key.down:
+                move_relative(dx=-step)
+            elif key == keyboard.Key.left:
+                print("Yaw left")
+                send_yaw_velocity(-yaw_rate)
+            elif key == keyboard.Key.right:
+                print("Yaw right")
+                send_yaw_velocity(yaw_rate)
+            elif key.char == 'u':
+                move_relative(dz=-step)
+            elif key.char == 'j':
+                move_relative(dz=step)
+        except AttributeError:
+            pass  # for special keys that aren't handled
+
+    with keyboard.Listener(on_press=on_press) as listener:
+        listener.join()
 
 # ========================
 # 5. Command-Line Interface
@@ -103,6 +141,7 @@ def arrow_key_control():
 print("\nAvailable commands:")
 print("  t - takeoff")
 print("  m - move with arrow keys")
+print("  r - start/stop webcam recording")
 print("  l - land")
 print("  e - exit\n")
 
@@ -116,6 +155,17 @@ while True:
             print("Invalid altitude value.")
     elif cmd == "m":
         arrow_key_control()
+    elif cmd == "r":
+        if not recording:
+            print("Starting video recording...")
+            out = cv2.VideoWriter('drone_feed.avi', cv2.VideoWriter_fourcc(*'XVID'), 20.0, (VIDEO_WIDTH, VIDEO_HEIGHT))
+            recording = True
+        else:
+            print("Stopping video recording...")
+            recording = False
+            if out:
+                out.release()
+                out = None
     elif cmd == "l":
         print("Landing...")
         vehicle.mode = VehicleMode("LAND")
@@ -124,4 +174,4 @@ while True:
         vehicle.close()
         break
     else:
-        print("Unknown command. Use 't', 'm', 'l', or 'e'.")
+        print("Unknown command. Use 't', 'm', 'r', 'l', or 'e'.")

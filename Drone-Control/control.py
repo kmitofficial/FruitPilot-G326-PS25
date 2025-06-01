@@ -134,19 +134,6 @@ def detect_loop():
 
         results = model.predict(source=frame, conf=0.5, verbose=False)[0]
         boxes = results.boxes
-        if boxes is not None and len(boxes.xyxy) > 0:
-            for i, box in enumerate(boxes.xyxy.cpu()):
-                x1, y1, x2, y2 = box.int().tolist()
-                cls_id = int(boxes.cls[i]) if boxes.cls is not None else -1
-                label = model.names[cls_id] if cls_id != -1 else "Object"
-                conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
-
-                bbox_width = x2 - x1
-                dist_cm = estimate_distance(FOCAL_LENGTH_MM, REAL_FRUIT_WIDTH_CM, bbox_width, IMAGE_WIDTH_PX, SENSOR_WIDTH_MM)
-
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.2f} | {dist_cm:.1f} cm", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         if search_flag and connected and armed:
             if boxes is None or len(boxes.xyxy) == 0:
@@ -184,8 +171,7 @@ def detect_loop():
                     print("Ready to search again.")
                     break
 
-        resized_frame = cv2.resize(frame, (1280, 720))
-        cv2.imshow("Live Feed", resized_frame)
+        cv2.imshow("Live Feed", frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break

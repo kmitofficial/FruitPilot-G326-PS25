@@ -1,0 +1,4 @@
+dronekit
+ultralytics
+pymavlink
+opencv-python

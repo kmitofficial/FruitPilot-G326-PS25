@@ -88,7 +88,7 @@ def send_ned_velocity(velocity_x, velocity_y, velocity_z, duration):
 
 # === OBJECT DETECTION + DRONE INTERACTION ===
 def detect_and_hover():
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture()
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH_PX)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT_PX)
 

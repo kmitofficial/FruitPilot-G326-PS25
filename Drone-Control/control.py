@@ -4,10 +4,9 @@ import cv2
 from ultralytics import YOLO
 import math
 from pymavlink import mavutil
-import keyboard
 
 # === CONFIGURATION ===
-MODEL_PATH = 'old_150.pt'
+MODEL_PATH = 'distant.pt'
 REAL_FRUIT_WIDTH_CM = 19.81
 REAL_FRUIT_HEIGHT_CM = 25.14
 FOCAL_LENGTH_MM = 3.6
@@ -60,9 +59,9 @@ def send_ned_velocity(velocity_x, velocity_y, velocity_z, duration):
 # === DRONE CONNECTION ===
 def connect_drone(connection_string, waitready=True, baudrate=57600):
     global vehicle
-    if vehicle == None:
+    if vehicle is None:
         vehicle = connect(connection_string, wait_ready=waitready, baud=baudrate)
-    print("drone connected")
+    print("Drone connected")
 
 def land():
     global vehicle
@@ -91,7 +90,7 @@ def print_telemetry():
     print(f" Battery: {vehicle.battery}")
 
 # === ARM AND TAKEOFF ===
-def arm(altitude = 4):
+def arm(altitude=4):
     global armed, search_flag
     print("Arming motors...")
     vehicle.mode = VehicleMode("GUIDED")
@@ -113,78 +112,66 @@ def arm(altitude = 4):
 
     search_flag = True  # Begin search loop
 
-# === DETECTION FUNCTION ===
+# === DETECTION LOOP ===
 def detect_loop():
-    global horizontal_fov_deg, vertical_fov_deg, search_flag
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH_PX)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT_PX)
+    global search_flag
+    cap = cv2.VideoCapture(0)  # Adjust camera index if needed
 
-    horizontal_fov_deg = 2 * math.degrees(math.atan((SENSOR_WIDTH_MM / 2) / FOCAL_LENGTH_MM))
-    vertical_fov_deg = 2 * math.degrees(math.atan((SENSOR_HEIGHT_MM / 2) / FOCAL_LENGTH_MM))
-    print(f"Calculated FOV: H={horizontal_fov_deg:.2f}°, V={vertical_fov_deg:.2f}°")
+    if not cap.isOpened():
+        print("Failed to open camera.")
+        return
 
-    yaw_angle = 0
-
-    while True:
+    print("Starting detection loop...")
+    while search_flag:
         ret, frame = cap.read()
         if not ret:
-            print("Camera error.")
+            print("Failed to read from camera.")
             break
 
-        results = model.predict(source=frame, conf=0.5, verbose=False)[0]
-        boxes = results.boxes
+        results = model(frame, verbose=False)[0]
 
-        if search_flag and connected and armed:
-            if boxes is None or len(boxes.xyxy) == 0:
-                yaw_angle += int(horizontal_fov_deg / 2) - 5
-                yaw_angle = yaw_angle % 360
-                print(f"No object. Rotating yaw to: {yaw_angle}")
-                condition_yaw(yaw_angle)
-                time.sleep(3)
-            else:
-                for i, box in enumerate(boxes.xyxy.cpu()):
-                    x1, y1, x2, y2 = box.int().tolist()
-                    bbox_width = x2 - x1
-                    bbox_center_x = (x1 + x2) // 2
-                    frame_center_x = IMAGE_WIDTH_PX // 2
-                    error = bbox_center_x - frame_center_x
+        for box in results.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            cls_id = int(box.cls[0])
+            label = model.names[cls_id] if model.names else str(cls_id)
 
-                    dist_cm = estimate_distance(FOCAL_LENGTH_MM, REAL_FRUIT_WIDTH_CM, bbox_width, IMAGE_WIDTH_PX, SENSOR_WIDTH_MM)
+            bbox_width = x2 - x1
+            distance_cm = estimate_distance(
+                FOCAL_LENGTH_MM,
+                REAL_FRUIT_WIDTH_CM,
+                bbox_width,
+                IMAGE_WIDTH_PX,
+                SENSOR_WIDTH_MM
+            )
 
-                    if abs(error) > 20:
-                        correction = int((error / IMAGE_WIDTH_PX) * horizontal_fov_deg)
-                        print(f"Aligning yaw by {correction} degrees")
-                        condition_yaw(correction, relative=True)
-                        time.sleep(3)
+            # Draw bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            info_text = f"{label} | {conf*100:.1f}% | {distance_cm:.1f}cm"
+            cv2.putText(frame, info_text, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-                    print(f"Moving toward object... Estimated distance: {dist_cm:.1f} cm")
-                    dist_m = dist_cm / 100.0
-                    send_ned_velocity(0.25, 0, 0, int(dist_m / 0.25))
+            if distance_cm < 100:
+                print(f"Close to {label}, distance: {distance_cm:.2f} cm")
+                send_ned_velocity(0.2, 0, 0, 3)
+                search_flag = False
+                break
 
-                    print("Returning to base height...")
-                    vehicle.simple_goto(LocationGlobalRelative(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, altitude_to_fly))
-                    while abs(vehicle.location.global_relative_frame.alt - altitude_to_fly) > 0.3:
-                        print(f" Current Altitude: {vehicle.location.global_relative_frame.alt:.2f}")
-                        time.sleep(3)
-
-                    print("Ready to search again.")
-                    break
-
-        cv2.imshow("Live Feed", frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        cv2.imshow("YOLO Detection Feed", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
 
-
+# === MAIN ===
 if __name__ == "__main__":
     try:
         connect_drone("tcp:127.0.0.1:5762")
-        arm()
-        while True:
-            detect_loop()
-    except:
-        print("Unable to connect to vehicle")
+        arm(altitude_to_fly)
+        detect_loop()
+        land()
+    except Exception as e:
+        print(f"Error: {e}")
+        if vehicle:
+            RTL()

@@ -86,7 +86,7 @@ def arm(altitude = 10):
             print("Reached target altitude")
             break
         time.sleep(1)
-    
+
     search_flag = True  # Begin search loop
 
 # === DETECTION FUNCTION ===
@@ -112,6 +112,9 @@ def detect_loop():
         boxes = results.boxes
 
         if search_flag and connected and armed:
+            print("Waiting 3 seconds before searching for fruit...")
+            time.sleep(3)
+
             if boxes is None or len(boxes.xyxy) == 0:
                 yaw_angle += int(horizontal_fov_deg / 2) - 5
                 yaw_angle = yaw_angle % 360

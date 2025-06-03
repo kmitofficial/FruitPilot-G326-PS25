@@ -23,11 +23,11 @@ org = (00, 185)
 fontScale = 1
 color = (0, 0, 255)
 thickness = 2
-SERVER_IP = '192.168.225.246'  # Replace with your server's local IP
-PORT = 12345
+# SERVER_IP = '192.168.225.246'  # Replace with your server's local IP
+# PORT = 12345
 
 # Create socket
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 
 
@@ -43,21 +43,12 @@ altitude  = 4
 
 def setup():
 
-    # control.connect_drone('/dev/ttyACM0', False, 57600)
     control.connect_drone("tcp:127.0.0.1:5762", True, 57600)
 
     ret, frame = cap.read()
-    # result = detection.get_detections(frame)
-    # client_socket.connect((SERVER_IP, PORT))
-    # print("SETup done")
-    #print("vehicle1 connected")
-    #control.connect_drone('udp:192.168.225.141:14551')
-    #Real drone 
-    #vehicle2 = connect('/dev/ttyACM0', wait_ready=False, baud=57600)
-    #print("vehicle2 connected")
-    #vehicle2.add_message_listener('DISTANCE_SENSOR',listener)
-    # print("Detector Initialized")
-    
+    result = detection.get_detections(frame)
+    print("SETup done")
+    print("vehicle1 connected")
 def init_camera():
       while True:
          ret, frame = cap.read()
@@ -131,7 +122,6 @@ def track():
         
         if abs(offset_x) > move_threshold:
             control.send_movement_command_Y(0)
-            client_socket.send("ORANGE".encode())
             cv2.line(frame, (box_center_x, y1), (box_center_x, y2), (255, 0, 0), 2)
             angle = -0.5 if offset_x < 0 else 0.5
             control.send_movement_command_YAW(angle)
@@ -139,10 +129,6 @@ def track():
             control.send_movement_command_YAW(0)
             cv2.line(frame, (box_center_x, y1), (box_center_x, y2), (0, 255, 0), 2)
             speed = 0.3 if area < 3850  else 0
-            if speed == 0:
-              client_socket.send("GREEN".encode())
-            else:
-              client_socket.send("ORANGE".encode())
             control.send_movement_command_Y(speed)
       out.write(frame)
       cv2.imshow("Drone camera", frame)
@@ -156,69 +142,39 @@ def track():
 
 
 setup()
-# init_camera()
 
-#Main loop
-start = input("Is camera working properly: ")
-if (start == "Y"):
-   STATE = control.arm_and_takeoff(altitude)
-   while True:
-      if STATE == "track":
-         STATE = track()
-      elif STATE == "search":
-         STATE = search()
+# Main loop 
+while True:
+    if STATE == "track":
+        STATE = track()
+
+    elif STATE == "search":
+       STATE = search()
+    
+    elif STATE == "takeoff":
+        # init_camera()
+        inpt = input("Enter yes to takeoff : ")
+        if inpt != "yes":
+           continue
+        STATE = control.arm_and_takeoff(altitude)
+        #point = LocationGlobalRelative(17.396973996804782, 78.49031912873349, altitude)
+        #control.goto(point)
         
-      elif STATE == "land":
+    elif STATE == "land":
         control.land()
         break
     
-      elif STATE == "RTL":
+    elif STATE == "RTL":
         control.RTL()
         break
        
-      elif STATE == "exit":
+    elif STATE == "exit":
         break
         
-      elif STATE == "idle":
-        client_socket.send("NONE".encode())
+    elif STATE == "idle":
         val = input("Drone is in idle state, try to change the state to [search, land, RTL, exit]:")
         if val in ["search", "land", "exit", "RTL"]:
            STATE = val
-
-# Main loop 
-# while True:
-#     if STATE == "track":
-#         STATE = track()
-
-#     elif STATE == "search":
-#        client_socket.send("RED".encode())
-#        STATE = search()
-    
-#     elif STATE == "takeoff":
-#         init_camera()
-#         inpt = input("Enter yes to takeoff : ")
-#         if inpt != "yes":
-#            continue
-#         STATE = control.arm_and_takeoff(altitude)
-#         #point = LocationGlobalRelative(17.396973996804782, 78.49031912873349, altitude)
-#         #control.goto(point)
-        
-#     elif STATE == "land":
-#         control.land()
-#         break
-    
-#     elif STATE == "RTL":
-#         control.RTL()
-#         break
-       
-#     elif STATE == "exit":
-#         break
-        
-#     elif STATE == "idle":
-#         client_socket.send("NONE".encode())
-#         val = input("Drone is in idle state, try to change the state to [search, land, RTL, exit]:")
-#         if val in ["search", "land", "exit", "RTL"]:
-#            STATE = val
 
 
     
@@ -227,7 +183,5 @@ if (start == "Y"):
 # Release resources
 cap.release()
 out.release()
-client_socket.send("EXIT".encode())
 cv2.destroyAllWindows()
 control.disconnect_drone()
-#vehicle2.close()
